@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MailOpen, Sparkles } from "lucide-react";
 import { ApprovedMessage } from "../lib/types";
 import { Badge } from "./ui/badge";
@@ -86,13 +86,40 @@ export function TickerBoard(props: TickerBoardProps) {
   const { messages } = props;
   const [activeView, setActiveView] = useState<"all" | "approved">("approved");
   const [selectedMessage, setSelectedMessage] = useState<ApprovedMessage | null>(null);
+  const [selectedModalView, setSelectedModalView] = useState<"email" | "incident">("email");
   const visibleMessages =
     activeView === "approved"
       ? messages.filter((message) => message.status === "APPROVED")
       : messages;
   const latestMessage = visibleMessages[0];
+  const incidentViewEnabled = activeView === "approved";
 
   const hasVisibleMessages = visibleMessages.length > 0;
+
+  useEffect(() => {
+    if (!selectedMessage) {
+      return;
+    }
+
+    const updatedMessage = messages.find((message) => message.id === selectedMessage.id);
+    if (!updatedMessage) {
+      setSelectedMessage(null);
+      return;
+    }
+
+    if (updatedMessage !== selectedMessage) {
+      setSelectedMessage(updatedMessage);
+    }
+  }, [messages, selectedMessage]);
+
+  useEffect(() => {
+    if (selectedMessage && incidentViewEnabled && selectedMessage.status === "APPROVED") {
+      setSelectedModalView("incident");
+      return;
+    }
+
+    setSelectedModalView("email");
+  }, [selectedMessage?.id]);
 
   return (
     <div className="space-y-6">
@@ -126,7 +153,16 @@ export function TickerBoard(props: TickerBoardProps) {
       </div>
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(280px,0.78fr)_minmax(0,1.45fr)] 2xl:grid-cols-[minmax(300px,0.72fr)_minmax(0,1.6fr)]">
-        {renderContent(visibleMessages, latestMessage, hasVisibleMessages, selectedMessage, setSelectedMessage)}
+        {renderContent(
+          visibleMessages,
+          latestMessage,
+          hasVisibleMessages,
+          selectedMessage,
+          setSelectedMessage,
+          incidentViewEnabled,
+          selectedModalView,
+          setSelectedModalView
+        )}
       </div>
     </div>
   );
@@ -137,7 +173,10 @@ function renderContent(
   latestMessage: ApprovedMessage | undefined,
   hasVisibleMessages: boolean,
   selectedMessage: ApprovedMessage | null,
-  setSelectedMessage: (message: ApprovedMessage | null) => void
+  setSelectedMessage: (message: ApprovedMessage | null) => void,
+  incidentViewEnabled: boolean,
+  selectedModalView: "email" | "incident",
+  setSelectedModalView: (view: "email" | "incident") => void
 ) {
   return (
     <>
@@ -236,7 +275,10 @@ function renderContent(
                   <button
                     key={message.id}
                     type="button"
-                    onClick={() => setSelectedMessage(message)}
+                    onClick={() => {
+                      setSelectedModalView(incidentViewEnabled && message.status === "APPROVED" ? "incident" : "email");
+                      setSelectedMessage(message);
+                    }}
                     className="block w-full rounded-[1.6rem] border border-white/8 bg-white/5 p-4 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[#59e1cf]/35 hover:bg-[#1a242d] hover:shadow-[0_18px_40px_rgba(0,0,0,0.28)] focus:outline-none focus:ring-2 focus:ring-[#59e1cf]/40"
                   >
                     <div className="flex items-start justify-between gap-4">
@@ -286,29 +328,84 @@ function renderContent(
               </DialogHeader>
               <DialogBody className="overflow-y-auto">
                 <div className="grid gap-4">
-                  <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.045] p-5">
-                    <p className="text-[0.7rem] uppercase tracking-[0.18em] text-white/34">Remitente</p>
-                    <p className="mt-3 break-words text-base font-semibold leading-7 text-white">
-                      {selectedMessage.fromName || selectedMessage.fromEmail}
-                    </p>
-                    {selectedMessage.fromName ? (
-                      <p className="mt-2 break-all text-sm leading-6 text-white/48">{selectedMessage.fromEmail}</p>
-                    ) : null}
-                    {selectedMessage.detectedClientName ? (
-                      <p className="mt-4 inline-flex rounded-full border border-[#59e1cf]/20 bg-[#59e1cf]/10 px-3 py-1 text-sm text-[#8ef2e4]">
-                        Cliente: {selectedMessage.detectedClientName}
+                  <div className="space-y-2 px-1">
+                    <p className="text-[0.68rem] uppercase tracking-[0.18em] text-white/34">Remitente</p>
+                    <div className="space-y-1">
+                      <p className="break-words text-base font-semibold leading-7 text-white">
+                        {selectedMessage.fromName || selectedMessage.fromEmail}
                       </p>
+                      {selectedMessage.fromName ? (
+                        <p className="break-all text-sm leading-6 text-white/48">{selectedMessage.fromEmail}</p>
+                      ) : null}
+                    </div>
+                    {selectedMessage.detectedClientName ? (
+                      <p className="text-sm text-[#8ef2e4]">Cliente: {selectedMessage.detectedClientName}</p>
                     ) : null}
                   </div>
 
                   <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.045] p-5">
-                    <p className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/36">
-                      <MailOpen className="size-3.5" />
-                      Correo recibido
-                    </p>
-                    <div className="mt-4 rounded-[1.25rem] border border-white/8 bg-[#0b1118] px-4 py-4 whitespace-pre-wrap text-sm leading-7 text-white/82">
-                      {formatEmailBody(
-                        selectedMessage.bodyText || selectedMessage.snippet || "Sin contenido disponible para este correo."
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/36">
+                        {selectedModalView === "incident" ? (
+                          <Sparkles className="size-3.5" />
+                        ) : (
+                          <MailOpen className="size-3.5" />
+                        )}
+                        {selectedModalView === "incident" ? "Incidente" : "Correo recibido"}
+                      </p>
+                      {incidentViewEnabled && selectedMessage.status === "APPROVED" ? (
+                        <div className="inline-flex shrink-0 rounded-full border border-white/10 bg-white/[0.04] p-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedModalView("incident")}
+                            className={[
+                              "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                              selectedModalView === "incident"
+                                ? "bg-white text-[#111827] shadow-sm"
+                                : "text-white/68 hover:bg-white/8 hover:text-white"
+                            ].join(" ")}
+                          >
+                            Incidente
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedModalView("email")}
+                            className={[
+                              "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                              selectedModalView === "email"
+                                ? "bg-white text-[#111827] shadow-sm"
+                                : "text-white/68 hover:bg-white/8 hover:text-white"
+                            ].join(" ")}
+                          >
+                            Correo
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div
+                      className={[
+                        "mt-4 rounded-[1.25rem] border border-white/8 bg-[#0b1118] px-4 py-4 text-sm leading-7 text-white/82",
+                        selectedModalView === "email" ? "whitespace-pre-wrap" : ""
+                      ].join(" ")}
+                    >
+                      {selectedModalView === "email" ? (
+                        formatEmailBody(
+                          selectedMessage.bodyText || selectedMessage.snippet || "Sin contenido disponible para este correo."
+                        )
+                      ) : (
+                        <>
+                          {selectedMessage.incidentSummaryModel ? (
+                            <p className="mb-3 text-sm text-white/48">
+                              Modelo usado: {selectedMessage.incidentSummaryModel}
+                            </p>
+                          ) : null}
+                          <div className="whitespace-pre-wrap">
+                            {formatEmailBody(
+                              selectedMessage.incidentSummary ||
+                                "El incidente aun no fue generado para este correo relevante."
+                            )}
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>

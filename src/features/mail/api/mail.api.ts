@@ -15,6 +15,12 @@ export function getMessageSummary(token: string) {
   return apiRequest<MessageSummary>("/gmail/messages/summary", "GET", undefined, token);
 }
 
+export function generateIncidentSummary(messageId: string, token: string) {
+  return apiRequest<ApprovedMessage>(`/gmail/messages/${messageId}/incident`, "POST", {}, token, {
+    timeoutMs: 45000
+  });
+}
+
 export function testMailConnection(config: Partial<GmailConfig>, token: string) {
   return apiRequest<{ message: string }>("/gmail/config/test", "POST", config, token);
 }

@@ -64,6 +64,9 @@ export type ApprovedMessage = {
   classificationConfidence?: number;
   matchedRules?: string[];
   detectedClientName?: string | null;
+  incidentSummary?: string | null;
+  incidentSummaryModel?: string | null;
+  incidentSummaryGeneratedAt?: string | null;
 };
 
 export type MessageSummary = {
