@@ -26,6 +26,31 @@ export type GmailConfig = {
   lastSyncAt?: string;
 };
 
+export type LlmProviderType = "LOCAL" | "API";
+export type RemoteLlmProviderName = "" | "OPENAI" | "ANTHROPIC" | "GOOGLE";
+export type LlmModelOption = {
+  id: string;
+  label: string;
+};
+
+export type LlmConfig = {
+  id?: string;
+  activeProvider: LlmProviderType;
+  localBaseUrl: string;
+  localGeneratePath: string;
+  localModel: string;
+  localTimeoutMs: number;
+  apiProviderName: RemoteLlmProviderName;
+  apiBaseUrl: string;
+  apiGeneratePath: string;
+  apiModel: string;
+  referenceMarkdown: string;
+  apiKey?: string;
+  apiKeyConfigured?: boolean;
+  apiTimeoutMs: number;
+  updatedAt?: string;
+};
+
 export type ApprovedMessage = {
   id: string;
   fromName?: string | null;

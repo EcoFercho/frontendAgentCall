@@ -3,6 +3,7 @@ import { CalendarDaysIcon, ChevronDownIcon, MailIcon, Settings2Icon, ShieldCheck
 import * as XLSX from "xlsx";
 import { AppSidebar, PanelSection } from "./components/app-sidebar";
 import { SiteHeader } from "./components/site-header";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./components/ui/sheet";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -17,6 +18,8 @@ import { SectionCards } from "./features/dashboard/components/SectionCards";
 import { TickerBoard } from "./features/dashboard/components/TickerBoard";
 import { useTicker } from "./features/dashboard/hooks/useTicker";
 import { defaultGmailConfig } from "./features/gmail-config/lib/default-gmail-config";
+import { getLlmConfig, listLlmModels, saveLlmConfig } from "./features/llm-config/api/llm.api";
+import { defaultLlmConfig, DEFAULT_LLM_REFERENCE_MARKDOWN } from "./features/llm-config/lib/default-llm-config";
 import {
   getClassifiedMessages,
   getMessageSummary,
@@ -40,15 +43,32 @@ import {
   schedulesOverlap,
   toMinutes
 } from "./features/shift-users/lib/schedule";
-import { GmailConfig, ShiftUser } from "./shared/types";
+import { GmailConfig, LlmConfig, LlmModelOption, RemoteLlmProviderName, ShiftUser } from "./shared/types";
 import { toast } from "sonner";
 
 type FlashTone = "neutral" | "success" | "error";
 type ShiftUserFormState = typeof emptyShiftUserForm;
 type ShiftUsersView = "form" | "list";
+type ConfigView = "gmail" | "llm";
 
 const TOKEN_STORAGE_KEY = "voice-app.token";
 const EMAIL_STORAGE_KEY = "voice-app.email";
+const REMOTE_LLM_PROVIDERS: Array<{ value: Exclude<RemoteLlmProviderName, "">; label: string }> = [
+  { value: "OPENAI", label: "OpenAI" },
+  { value: "ANTHROPIC", label: "Anthropic / Claude" },
+  { value: "GOOGLE", label: "Google / Gemini" }
+];
+
+function getRemoteProviderLabel(providerName: RemoteLlmProviderName) {
+  return REMOTE_LLM_PROVIDERS.find((provider) => provider.value === providerName)?.label ?? "Proveedor no definido";
+}
+
+function createModelOption(modelId: string): LlmModelOption {
+  return {
+    id: modelId,
+    label: modelId
+  };
+}
 
 export function App() {
   const [email, setEmail] = useState("engine.ia.lab@gmail.com");
@@ -66,6 +86,7 @@ export function App() {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [messageSummaryCount, setMessageSummaryCount] = useState(0);
   const [config, setConfig] = useState<GmailConfig>(defaultGmailConfig);
+  const [llmConfig, setLlmConfig] = useState<LlmConfig>(defaultLlmConfig);
   const [flash, setFlash] = useState("Inicia sesión para entrar al panel.");
   const [flashTone, setFlashTone] = useState<FlashTone>("neutral");
   const [shiftUsers, setShiftUsers] = useState<ShiftUser[]>([]);
@@ -73,9 +94,15 @@ export function App() {
     createEmptyShiftUserForm(getTodayDateValue())
   );
   const [shiftUsersView, setShiftUsersView] = useState<ShiftUsersView>("form");
+  const [configView, setConfigView] = useState<ConfigView>("gmail");
   const [importingShifts, setImportingShifts] = useState(false);
+  const [llmModelOptions, setLlmModelOptions] = useState<LlmModelOption[]>([]);
+  const [loadingLlmModels, setLoadingLlmModels] = useState(false);
+  const [llmReferenceDialogOpen, setLlmReferenceDialogOpen] = useState(false);
+  const [llmReferenceDraft, setLlmReferenceDraft] = useState(DEFAULT_LLM_REFERENCE_MARKDOWN);
   const syncInFlightRef = useRef(false);
   const dashboardRefreshInFlightRef = useRef(false);
+  const suspendLlmConfigRefreshRef = useRef(false);
   const shiftImportInputRef = useRef<HTMLInputElement | null>(null);
   const { messages, setMessages, isConnected } = useTicker([]);
 
@@ -132,18 +159,27 @@ export function App() {
     setLastSyncedAt(null);
     setMessageSummaryCount(0);
     setConfig(defaultGmailConfig);
+    setLlmConfig(defaultLlmConfig);
+    setLlmReferenceDraft(defaultLlmConfig.referenceMarkdown);
+    setLlmModelOptions([]);
     setShiftUserForm(createEmptyShiftUserForm(getTodayDateValue()));
     setShiftUsersView("form");
+    setConfigView("gmail");
     setActiveSection("dashboard");
     setSidebarCollapsed(false);
     setMobileSidebarOpen(false);
     setFlashMessage(message, "error");
   }
 
-  async function loadInitialData(authToken: string, options?: { includeShiftUsers?: boolean }) {
+  async function loadInitialData(
+    authToken: string,
+    options?: { includeShiftUsers?: boolean; includeLlmConfig?: boolean }
+  ) {
     const includeShiftUsers = options?.includeShiftUsers ?? true;
-    const [savedConfig, approvedMessages, messageSummary, savedShiftUsers] = await Promise.all([
+    const includeLlmConfig = options?.includeLlmConfig ?? !suspendLlmConfigRefreshRef.current;
+    const [savedConfig, savedLlmConfig, approvedMessages, messageSummary, savedShiftUsers] = await Promise.all([
       getMailConfig(authToken),
+      includeLlmConfig ? getLlmConfig(authToken) : Promise.resolve(null),
       getClassifiedMessages(authToken),
       getMessageSummary(authToken),
       includeShiftUsers ? listShiftUsers(authToken) : Promise.resolve(null)
@@ -153,6 +189,16 @@ export function App() {
     setMessageSummaryCount(messageSummary.classifiedCount);
     if (savedShiftUsers) {
       setShiftUsers(savedShiftUsers);
+    }
+
+    if (savedLlmConfig) {
+      setLlmConfig({
+        ...defaultLlmConfig,
+        ...savedLlmConfig,
+        apiKey: ""
+      });
+      setLlmReferenceDraft(savedLlmConfig.referenceMarkdown);
+      setLlmModelOptions(savedLlmConfig.apiModel ? [createModelOption(savedLlmConfig.apiModel)] : []);
     }
 
     if (savedConfig) {
@@ -210,8 +256,12 @@ export function App() {
     setLastSyncedAt(null);
     setMessageSummaryCount(0);
     setConfig(defaultGmailConfig);
+    setLlmConfig(defaultLlmConfig);
+    setLlmReferenceDraft(defaultLlmConfig.referenceMarkdown);
+    setLlmModelOptions([]);
     setShiftUserForm(createEmptyShiftUserForm(getTodayDateValue()));
     setShiftUsersView("form");
+    setConfigView("gmail");
     setActiveSection("dashboard");
     setSidebarCollapsed(false);
     setMobileSidebarOpen(false);
@@ -321,6 +371,114 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSaveLlmConfig() {
+    if (llmConfig.activeProvider === "API") {
+      if (!llmConfig.apiProviderName) {
+        setFlashMessage("Selecciona un proveedor API.", "error");
+        return;
+      }
+
+      if (!llmConfig.apiKeyConfigured && !llmConfig.apiKey?.trim()) {
+        setFlashMessage("Pega una API key para guardar la configuración remota.", "error");
+        return;
+      }
+
+      if (!llmConfig.apiModel.trim()) {
+        setFlashMessage("Selecciona un modelo remoto antes de guardar.", "error");
+        return;
+      }
+    }
+
+    setLoading(true);
+    try {
+      const savedConfig = await saveLlmConfig(llmConfig, token);
+      setLlmConfig({
+        ...llmConfig,
+        ...savedConfig,
+        apiKey: ""
+      });
+      setLlmModelOptions((current) => {
+        if (!savedConfig.apiModel) {
+          return current;
+        }
+
+        return current.some((option) => option.id === savedConfig.apiModel)
+          ? current
+          : [createModelOption(savedConfig.apiModel), ...current];
+      });
+      setFlashMessage("Configuración LLM guardada.", "success");
+    } catch (error) {
+      setFlashMessage(error instanceof Error ? error.message : "No se pudo guardar la configuración LLM", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLoadLlmModels() {
+    if (!token) {
+      setFlashMessage("Inicia sesión para consultar modelos.", "error");
+      return;
+    }
+
+    if (!llmConfig.apiProviderName) {
+      setFlashMessage("Selecciona un proveedor API.", "error");
+      return;
+    }
+
+    if (!llmConfig.apiKey?.trim() && !llmConfig.apiKeyConfigured) {
+      setFlashMessage("Pega una API key o guarda una previamente para consultar modelos.", "error");
+      return;
+    }
+
+    setLoadingLlmModels(true);
+    try {
+      const models = await listLlmModels(
+        {
+          providerName: llmConfig.apiProviderName as Exclude<RemoteLlmProviderName, "">,
+          apiKey: llmConfig.apiKey?.trim() || undefined
+        },
+        token
+      );
+
+      setLlmModelOptions(models);
+      setLlmConfig((current) => {
+        if (models.length === 0) {
+          return { ...current, apiModel: "" };
+        }
+
+        const hasSelectedModel = models.some((model) => model.id === current.apiModel);
+        return {
+          ...current,
+          apiModel: hasSelectedModel ? current.apiModel : models[0].id
+        };
+      });
+
+      setFlashMessage(
+        models.length > 0
+          ? `Se cargaron ${models.length} modelos disponibles.`
+          : "El proveedor no devolvió modelos utilizables para esta API key.",
+        models.length > 0 ? "success" : "neutral"
+      );
+    } catch (error) {
+      setFlashMessage(error instanceof Error ? error.message : "No se pudieron consultar modelos remotos", "error");
+    } finally {
+      setLoadingLlmModels(false);
+    }
+  }
+
+  function openLlmReferenceDialog() {
+    setLlmReferenceDraft(llmConfig.referenceMarkdown || DEFAULT_LLM_REFERENCE_MARKDOWN);
+    setLlmReferenceDialogOpen(true);
+  }
+
+  function applyLlmReferenceDraft() {
+    setLlmConfig((current) => ({
+      ...current,
+      referenceMarkdown: llmReferenceDraft
+    }));
+    setLlmReferenceDialogOpen(false);
   }
 
   function resetShiftUserForm() {
@@ -557,6 +715,10 @@ export function App() {
     };
   }, [token, autoSyncEnabled]);
 
+  useEffect(() => {
+    suspendLlmConfigRefreshRef.current = activeSection === "config" && configView === "llm";
+  }, [activeSection, configView]);
+
   function renderFlash() {
     const toneClass =
       flashTone === "success"
@@ -659,6 +821,293 @@ export function App() {
               Probar conexión
             </Button>
           </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  function renderLlmView() {
+    const remoteModelChoices = llmModelOptions.length > 0
+      ? llmModelOptions
+      : llmConfig.apiModel
+        ? [createModelOption(llmConfig.apiModel)]
+        : [];
+
+    return (
+      <Card className="dashboard-metric-card text-white">
+        <CardHeader>
+          <CardTitle className="text-white">Configuración LLM</CardTitle>
+          <CardDescription className="text-white/44">
+            Define si el sistema usará tu modelo local o una API externa con un flujo remoto más directo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-6">
+          <div className="grid gap-3 md:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setLlmConfig((current) => ({ ...current, activeProvider: "LOCAL" }))}
+              className={[
+                "rounded-2xl border px-4 py-4 text-left transition",
+                llmConfig.activeProvider === "LOCAL"
+                  ? "border-[#59e1cf]/35 bg-[#143139] text-white"
+                  : "border-white/10 bg-white/6 text-white/76 hover:bg-white/10 hover:text-white"
+              ].join(" ")}
+            >
+              <p className="text-sm font-semibold">Modelo local</p>
+              <p className="mt-1 text-xs text-current/65">Ideal para usar Gemma en tu red o tu máquina local.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLlmConfig((current) => ({ ...current, activeProvider: "API" }))}
+              className={[
+                "rounded-2xl border px-4 py-4 text-left transition",
+                llmConfig.activeProvider === "API"
+                  ? "border-[#ff845d]/35 bg-[#3a231d] text-white"
+                  : "border-white/10 bg-white/6 text-white/76 hover:bg-white/10 hover:text-white"
+              ].join(" ")}
+            >
+              <p className="text-sm font-semibold">API externa</p>
+              <p className="mt-1 text-xs text-current/65">Selecciona proveedor, pega la API key y elige el modelo remoto.</p>
+            </button>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">Proveedor local</p>
+                  <p className="text-xs text-white/48">Ejemplo compatible: Ollama o servicio local equivalente.</p>
+                </div>
+                <Badge variant="outline" className={llmConfig.activeProvider === "LOCAL" ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-200" : "border-white/10 bg-white/6 text-white/60"}>
+                  {llmConfig.activeProvider === "LOCAL" ? "Activo" : "Inactivo"}
+                </Badge>
+              </div>
+
+              <div className="grid gap-4">
+                <Field label="Base URL" id="llm-local-baseUrl">
+                  <Input
+                    id="llm-local-baseUrl"
+                    className="dashboard-dark-input"
+                    value={llmConfig.localBaseUrl}
+                    onChange={(event) =>
+                      setLlmConfig((current) => ({ ...current, localBaseUrl: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field label="Ruta generate" id="llm-local-generatePath">
+                  <Input
+                    id="llm-local-generatePath"
+                    className="dashboard-dark-input"
+                    value={llmConfig.localGeneratePath}
+                    onChange={(event) =>
+                      setLlmConfig((current) => ({ ...current, localGeneratePath: event.target.value }))
+                    }
+                  />
+                </Field>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Modelo" id="llm-local-model">
+                    <Input
+                      id="llm-local-model"
+                      className="dashboard-dark-input"
+                      value={llmConfig.localModel}
+                      onChange={(event) =>
+                        setLlmConfig((current) => ({ ...current, localModel: event.target.value }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Timeout ms" id="llm-local-timeout">
+                    <Input
+                      id="llm-local-timeout"
+                      className="dashboard-dark-input"
+                      type="number"
+                      value={llmConfig.localTimeoutMs}
+                      onChange={(event) =>
+                        setLlmConfig((current) => ({
+                          ...current,
+                          localTimeoutMs: Number(event.target.value) || 0
+                        }))
+                      }
+                    />
+                  </Field>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">Proveedor API</p>
+                  <p className="text-xs text-white/48">Selecciona proveedor, pega la API key, carga sus modelos y elige uno.</p>
+                </div>
+                <Badge variant="outline" className={llmConfig.activeProvider === "API" ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-200" : "border-white/10 bg-white/6 text-white/60"}>
+                  {llmConfig.activeProvider === "API" ? "Activo" : "Inactivo"}
+                </Badge>
+              </div>
+
+              <div className="grid min-w-0 gap-4">
+                <Field label="Proveedor API" id="llm-api-providerName">
+                  <select
+                    id="llm-api-providerName"
+                    className="dashboard-dark-select"
+                    value={llmConfig.apiProviderName}
+                    onChange={(event) => {
+                      const nextProvider = event.target.value as RemoteLlmProviderName;
+                      setLlmModelOptions([]);
+                      setLlmConfig((current) => ({
+                        ...current,
+                        apiProviderName: nextProvider,
+                        apiModel: ""
+                      }));
+                    }}
+                  >
+                    <option value="">Selecciona un proveedor</option>
+                    {REMOTE_LLM_PROVIDERS.map((provider) => (
+                      <option key={provider.value} value={provider.value}>
+                        {provider.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="API key" id="llm-api-key">
+                  <Input
+                    id="llm-api-key"
+                    className="dashboard-dark-input min-w-0"
+                    type="password"
+                    placeholder={llmConfig.apiKeyConfigured ? "Ya existe una API key guardada" : "Pega aquí tu API key"}
+                    value={llmConfig.apiKey ?? ""}
+                    onChange={(event) => {
+                      setLlmModelOptions([]);
+                      setLlmConfig((current) => ({ ...current, apiKey: event.target.value, apiModel: "" }));
+                    }}
+                  />
+                </Field>
+                <p className="min-w-0 text-xs leading-snug text-white/45">
+                  {llmConfig.apiKey?.trim()
+                    ? "Se usará la API key escrita para consultar los modelos."
+                    : llmConfig.apiKeyConfigured
+                      ? "Si no escribes una nueva, se usará la API key ya guardada."
+                      : "Primero pega una API key para poder consultar modelos."}
+                </p>
+                <div className="flex">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full border-white/10 bg-white/6 text-white hover:bg-white/10 hover:text-white sm:w-auto"
+                    onClick={handleLoadLlmModels}
+                    disabled={loadingLlmModels || loading}
+                  >
+                    {loadingLlmModels ? "Cargando modelos..." : "Ver modelos disponibles"}
+                  </Button>
+                </div>
+                <Field label="Modelo" id="llm-api-model">
+                  <select
+                    id="llm-api-model"
+                    className="dashboard-dark-select"
+                    value={llmConfig.apiModel}
+                    onChange={(event) =>
+                      setLlmConfig((current) => ({ ...current, apiModel: event.target.value }))
+                    }
+                    disabled={remoteModelChoices.length === 0}
+                  >
+                    <option value="">
+                      {remoteModelChoices.length > 0
+                        ? "Selecciona un modelo"
+                        : "Carga primero los modelos del proveedor"}
+                    </option>
+                    {remoteModelChoices.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <p className="min-w-0 break-words text-xs leading-relaxed text-white/45">
+                  {llmConfig.apiKeyConfigured
+                    ? "La API key ya está configurada. Si escribes una nueva, reemplazará la actual al guardar."
+                    : "Todavía no hay una API key guardada para el proveedor remoto."}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-white">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-sm font-semibold text-white">Instrucciones base</p>
+                  <Badge variant="outline" className="border-white/10 bg-white/6 text-white/60">
+                    {llmConfig.referenceMarkdown.trim() ? "Configuradas" : "Sin contenido"}
+                  </Badge>
+                </div>
+                <p className="max-w-3xl text-xs leading-relaxed text-white/48">
+                  Edita tu prompt base y referencia Markdown en un popup dedicado para mantener esta pantalla limpia.
+                </p>
+                <p className="text-xs text-white/45">
+                  {llmConfig.referenceMarkdown.length} caracteres guardados en el formulario actual.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-white/10 bg-white/6 text-white hover:bg-white/10 hover:text-white"
+                onClick={openLlmReferenceDialog}
+              >
+                Editar instrucciones
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <Button className="bg-[#ff845d] text-black hover:bg-[#ff9b7b]" onClick={handleSaveLlmConfig} disabled={loading}>
+              Guardar configuración LLM
+            </Button>
+          </div>
+
+          <Dialog open={llmReferenceDialogOpen} onOpenChange={setLlmReferenceDialogOpen}>
+            <DialogContent className="w-[min(94vw,980px)] max-h-[88vh] overflow-hidden">
+              <DialogHeader>
+                <DialogTitle>Instrucciones base del LLM</DialogTitle>
+                <DialogDescription>
+                  Pega o edita aqui el Markdown de referencia. Al aplicar cambios, se copia al formulario LLM y se
+                  guarda despues con el boton principal de configuracion.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+                <textarea
+                  id="llm-reference-markdown"
+                  className="dashboard-dark-textarea min-h-[26rem] flex-1"
+                  value={llmReferenceDraft}
+                  onChange={(event) => setLlmReferenceDraft(event.target.value)}
+                  placeholder="Pega aqui tu prompt base o contenido Markdown"
+                  spellCheck={false}
+                />
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-white/45">
+                  <span>{llmReferenceDraft.length} caracteres</span>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="border-white/10 bg-white/6 text-white hover:bg-white/10 hover:text-white"
+                      onClick={() => setLlmReferenceDraft(DEFAULT_LLM_REFERENCE_MARKDOWN)}
+                    >
+                      Restaurar plantilla
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="border-white/10 bg-white/6 text-white hover:bg-white/10 hover:text-white"
+                      onClick={() => setLlmReferenceDialogOpen(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button className="bg-[#ff845d] text-black hover:bg-[#ff9b7b]" type="button" onClick={applyLlmReferenceDraft}>
+                      Aplicar cambios
+                    </Button>
+                  </div>
+                </div>
+              </DialogBody>
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
     );
@@ -1094,7 +1543,7 @@ export function App() {
               activeSection === "dashboard"
                 ? "Panel de correos aprobados"
                 : activeSection === "config"
-                  ? "Ajustes de Gmail"
+                  ? "Configuracion del sistema"
                   : "Gestión de usuarios de turno"
             }
             visibleCount={activeSection === "shift-users" ? orderedShiftUsers.length : messageSummaryCount}
@@ -1132,55 +1581,167 @@ export function App() {
               </>
             ) : activeSection === "config" ? (
               <div className="px-4 lg:px-6">
+                <div className="mb-6 inline-flex gap-2 rounded-2xl border border-white/10 bg-white/6 p-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfigView("gmail")}
+                    className={[
+                      "rounded-xl px-4 py-2.5 text-sm font-medium transition",
+                      configView === "gmail"
+                        ? "bg-white text-[#111827] shadow-sm"
+                        : "text-white/72 hover:bg-white/8 hover:text-white"
+                    ].join(" ")}
+                  >
+                    Gmail
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfigView("llm")}
+                    className={[
+                      "rounded-xl px-4 py-2.5 text-sm font-medium transition",
+                      configView === "llm"
+                        ? "bg-white text-[#111827] shadow-sm"
+                        : "text-white/72 hover:bg-white/8 hover:text-white"
+                    ].join(" ")}
+                  >
+                    LLM
+                  </button>
+                </div>
                 <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,1fr)]">
-                  <div>{renderGmailView()}</div>
+                  <div>{configView === "gmail" ? renderGmailView() : renderLlmView()}</div>
                   <div className="grid gap-6 self-start">
-                    <Card className="dashboard-metric-card py-0 text-white">
-                      <CardHeader className="space-y-2 px-6 py-6">
-                        <CardDescription className="text-white/44">Cuenta base</CardDescription>
-                        <CardTitle className="break-all text-[2rem] font-semibold leading-tight text-white">
-                          {config.baseEmail || "--"}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
-                        <p className="font-medium text-white">Canal principal de lectura</p>
-                        <p className="mt-2 text-white/58">Inbox y Spam segun la configuracion del backend</p>
-                      </CardContent>
-                    </Card>
+                    {configView === "gmail" ? (
+                      <>
+                        <Card className="dashboard-metric-card py-0 text-white">
+                          <CardHeader className="space-y-2 px-6 py-6">
+                            <CardDescription className="text-white/44">Cuenta base</CardDescription>
+                            <CardTitle className="break-all text-[2rem] font-semibold leading-tight text-white">
+                              {config.baseEmail || "--"}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
+                            <p className="font-medium text-white">Canal principal de lectura</p>
+                            <p className="mt-2 text-white/58">Inbox y Spam segun la configuracion del backend</p>
+                          </CardContent>
+                        </Card>
 
-                    <Card className="dashboard-metric-card py-0 text-white">
-                      <CardHeader className="space-y-2 px-6 py-6">
-                        <CardDescription className="text-white/44">Seguridad</CardDescription>
-                        <CardTitle className="text-[2rem] font-semibold leading-tight text-white">
-                          {config.secure ? "TLS habilitado" : "TLS desactivado"}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
-                        <p className="font-medium text-white">Host {config.host || "--"}</p>
-                        <p className="mt-2 text-white/58">Puerto {config.port || "--"}</p>
-                      </CardContent>
-                    </Card>
+                        <Card className="dashboard-metric-card py-0 text-white">
+                          <CardHeader className="space-y-2 px-6 py-6">
+                            <CardDescription className="text-white/44">Seguridad</CardDescription>
+                            <CardTitle className="text-[2rem] font-semibold leading-tight text-white">
+                              {config.secure ? "TLS habilitado" : "TLS desactivado"}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
+                            <p className="font-medium text-white">Host {config.host || "--"}</p>
+                            <p className="mt-2 text-white/58">Puerto {config.port || "--"}</p>
+                          </CardContent>
+                        </Card>
 
-                    <Card className="dashboard-metric-card py-0 text-white">
-                      <CardHeader className="space-y-2 px-6 py-6">
-                        <CardDescription className="text-white/44">Auto-sync</CardDescription>
-                        <CardTitle className="text-[2rem] font-semibold leading-tight text-white">
-                          {autoSyncEnabled ? "Encendido" : "Apagado"}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
-                        <p className="font-medium text-white">Ultimo sync</p>
-                        <p className="mt-2 text-white/58">
-                          {lastSyncedAt
-                            ? new Intl.DateTimeFormat("es-BO", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                second: "2-digit"
-                              }).format(new Date(lastSyncedAt))
-                            : "Sin actividad reciente"}
-                        </p>
-                      </CardContent>
-                    </Card>
+                        <Card className="dashboard-metric-card py-0 text-white">
+                          <CardHeader className="space-y-2 px-6 py-6">
+                            <CardDescription className="text-white/44">Auto-sync</CardDescription>
+                            <CardTitle className="text-[2rem] font-semibold leading-tight text-white">
+                              {autoSyncEnabled ? "Encendido" : "Apagado"}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
+                            <p className="font-medium text-white">Ultimo sync</p>
+                            <p className="mt-2 text-white/58">
+                              {lastSyncedAt
+                                ? new Intl.DateTimeFormat("es-BO", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                    second: "2-digit"
+                                  }).format(new Date(lastSyncedAt))
+                                : "Sin actividad reciente"}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      </>
+                    ) : (
+                      <>
+                        <Card className="dashboard-metric-card py-0 text-white">
+                          <CardHeader className="space-y-2 px-6 py-6">
+                            <CardDescription className="text-white/44">Proveedor activo</CardDescription>
+                            <CardTitle className="text-[2rem] font-semibold leading-tight text-white">
+                              {llmConfig.activeProvider === "LOCAL" ? "Modelo local" : "API externa"}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
+                            <p className="font-medium text-white">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? llmConfig.localModel || "--"
+                                : getRemoteProviderLabel(llmConfig.apiProviderName)}
+                            </p>
+                            <p className="mt-2 text-white/58">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? "El backend usara el runtime local configurado."
+                                : "El backend usara la API remota configurada."}
+                            </p>
+                          </CardContent>
+                        </Card>
+
+                        <Card className="dashboard-metric-card py-0 text-white">
+                          <CardHeader className="space-y-2 px-6 py-6">
+                            <CardDescription className="text-white/44">
+                              {llmConfig.activeProvider === "LOCAL" ? "Endpoint" : "Modelo remoto"}
+                            </CardDescription>
+                            <CardTitle className="break-all text-[2rem] font-semibold leading-tight text-white">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? llmConfig.localBaseUrl || "--"
+                                : llmConfig.apiModel || "--"}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
+                            <p className="font-medium text-white">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? `Ruta ${llmConfig.localGeneratePath || "--"}`
+                                : llmConfig.apiProviderName
+                                  ? `Proveedor ${getRemoteProviderLabel(llmConfig.apiProviderName)}`
+                                  : "Selecciona un proveedor remoto"}
+                            </p>
+                            <p className="mt-2 text-white/58">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? `Timeout ${llmConfig.localTimeoutMs} ms`
+                                : "La URL y la ruta se resuelven automaticamente segun el proveedor."}
+                            </p>
+                          </CardContent>
+                        </Card>
+
+                        <Card className="dashboard-metric-card py-0 text-white">
+                          <CardHeader className="space-y-2 px-6 py-6">
+                            <CardDescription className="text-white/44">Credenciales y modelo</CardDescription>
+                            <CardTitle className="text-[2rem] font-semibold leading-tight text-white">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? llmConfig.localModel || "--"
+                                : llmConfig.apiKeyConfigured
+                                  ? "API key guardada"
+                                  : "API key pendiente"}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="px-6 pb-6 pt-0 text-sm text-white/82">
+                            <p className="font-medium text-white">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? "Modelo seleccionado para extraccion estructurada."
+                                : llmConfig.apiModel || "Modelo remoto no definido"}
+                            </p>
+                            <p className="mt-2 text-white/58">
+                              {llmConfig.activeProvider === "LOCAL"
+                                ? "Puedes cambiar modelo, URL y ruta sin tocar el flujo del sistema."
+                                : llmConfig.apiKeyConfigured
+                                  ? "La credencial remota ya esta almacenada en backend."
+                                  : "Guarda una API key para habilitar el proveedor remoto."}
+                            </p>
+                            <p className="mt-2 text-white/58">
+                              {llmConfig.referenceMarkdown.trim()
+                                ? `Referencia Markdown configurada (${llmConfig.referenceMarkdown.length} caracteres).`
+                                : "Todavia no hay una referencia Markdown personalizada."}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1196,7 +1757,7 @@ export function App() {
 
 function Field(props: { id: string; label: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <Label htmlFor={props.id} className="text-white/85">
         {props.label}
       </Label>
