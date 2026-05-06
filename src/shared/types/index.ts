@@ -70,6 +70,8 @@ export type ApprovedMessage = {
   incidentSeverity?: string | null;
   incidentSummaryModel?: string | null;
   incidentSummaryGeneratedAt?: string | null;
+  incidentSummaryError?: string | null;
+  incidentSummaryLastAttemptAt?: string | null;
 };
 
 export type MessageSummary = {

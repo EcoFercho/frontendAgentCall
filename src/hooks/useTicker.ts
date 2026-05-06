@@ -45,7 +45,7 @@ export function useTicker(initialMessages: ApprovedMessage[]) {
     socket.connect();
 
     socket.on("ticker.email-classified", (message: ApprovedMessage) => {
-      setMessages((current) => [message, ...current]);
+      setMessages((current) => [...current.filter((entry) => entry.id !== message.id), message]);
     });
     socket.on("ticker.summary", (summary: RealtimeSummary) => {
       setLastSummary(summary);

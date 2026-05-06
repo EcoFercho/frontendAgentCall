@@ -97,8 +97,10 @@ export function App() {
   const [shiftUsersView, setShiftUsersView] = useState<ShiftUsersView>("form");
   const [configView, setConfigView] = useState<ConfigView>("gmail");
   const [importingShifts, setImportingShifts] = useState(false);
-  const [llmModelOptions, setLlmModelOptions] = useState<LlmModelOption[]>([]);
-  const [loadingLlmModels, setLoadingLlmModels] = useState(false);
+  const [localLlmModelOptions, setLocalLlmModelOptions] = useState<LlmModelOption[]>([]);
+  const [remoteLlmModelOptions, setRemoteLlmModelOptions] = useState<LlmModelOption[]>([]);
+  const [loadingLocalLlmModels, setLoadingLocalLlmModels] = useState(false);
+  const [loadingRemoteLlmModels, setLoadingRemoteLlmModels] = useState(false);
   const [llmReferenceDialogOpen, setLlmReferenceDialogOpen] = useState(false);
   const [llmReferenceDraft, setLlmReferenceDraft] = useState(DEFAULT_LLM_REFERENCE_MARKDOWN);
   const syncInFlightRef = useRef(false);
@@ -163,7 +165,8 @@ export function App() {
     setConfig(defaultGmailConfig);
     setLlmConfig(defaultLlmConfig);
     setLlmReferenceDraft(defaultLlmConfig.referenceMarkdown);
-    setLlmModelOptions([]);
+    setLocalLlmModelOptions([]);
+    setRemoteLlmModelOptions([]);
     setShiftUserForm(createEmptyShiftUserForm(getTodayDateValue()));
     setShiftUsersView("form");
     setConfigView("gmail");
@@ -201,7 +204,8 @@ export function App() {
         apiKey: ""
       });
       setLlmReferenceDraft(savedLlmConfig.referenceMarkdown);
-      setLlmModelOptions(savedLlmConfig.apiModel ? [createModelOption(savedLlmConfig.apiModel)] : []);
+      setLocalLlmModelOptions(savedLlmConfig.localModel ? [createModelOption(savedLlmConfig.localModel)] : []);
+      setRemoteLlmModelOptions(savedLlmConfig.apiModel ? [createModelOption(savedLlmConfig.apiModel)] : []);
     }
 
     if (savedConfig) {
@@ -262,7 +266,8 @@ export function App() {
     setConfig(defaultGmailConfig);
     setLlmConfig(defaultLlmConfig);
     setLlmReferenceDraft(defaultLlmConfig.referenceMarkdown);
-    setLlmModelOptions([]);
+    setLocalLlmModelOptions([]);
+    setRemoteLlmModelOptions([]);
     setShiftUserForm(createEmptyShiftUserForm(getTodayDateValue()));
     setShiftUsersView("form");
     setConfigView("gmail");
@@ -403,7 +408,12 @@ export function App() {
         ...savedConfig,
         apiKey: ""
       });
-      setLlmModelOptions((current) => {
+      setLocalLlmModelOptions((current) =>
+        savedConfig.localModel && !current.some((option) => option.id === savedConfig.localModel)
+          ? [createModelOption(savedConfig.localModel), ...current]
+          : current
+      );
+      setRemoteLlmModelOptions((current) => {
         if (!savedConfig.apiModel) {
           return current;
         }
@@ -420,7 +430,49 @@ export function App() {
     }
   }
 
-  async function handleLoadLlmModels() {
+  async function handleLoadLocalLlmModels() {
+    if (!token) {
+      setFlashMessage("Inicia sesión para consultar modelos locales.", "error");
+      return;
+    }
+
+    setLoadingLocalLlmModels(true);
+    try {
+      const models = await listLlmModels(
+        {
+          providerType: "LOCAL",
+          localBaseUrl: llmConfig.localBaseUrl.trim() || undefined
+        },
+        token
+      );
+
+      setLocalLlmModelOptions(models);
+      setLlmConfig((current) => {
+        if (models.length === 0) {
+          return { ...current, localModel: "" };
+        }
+
+        const hasSelectedModel = models.some((model) => model.id === current.localModel);
+        return {
+          ...current,
+          localModel: hasSelectedModel ? current.localModel : models[0].id
+        };
+      });
+
+      setFlashMessage(
+        models.length > 0
+          ? `Se cargaron ${models.length} modelos locales disponibles.`
+          : "El runtime local no devolvió modelos utilizables.",
+        models.length > 0 ? "success" : "neutral"
+      );
+    } catch (error) {
+      setFlashMessage(error instanceof Error ? error.message : "No se pudieron consultar modelos locales", "error");
+    } finally {
+      setLoadingLocalLlmModels(false);
+    }
+  }
+
+  async function handleLoadRemoteLlmModels() {
     if (!token) {
       setFlashMessage("Inicia sesión para consultar modelos.", "error");
       return;
@@ -436,17 +488,18 @@ export function App() {
       return;
     }
 
-    setLoadingLlmModels(true);
+    setLoadingRemoteLlmModels(true);
     try {
       const models = await listLlmModels(
         {
+          providerType: "API",
           providerName: llmConfig.apiProviderName as Exclude<RemoteLlmProviderName, "">,
           apiKey: llmConfig.apiKey?.trim() || undefined
         },
         token
       );
 
-      setLlmModelOptions(models);
+      setRemoteLlmModelOptions(models);
       setLlmConfig((current) => {
         if (models.length === 0) {
           return { ...current, apiModel: "" };
@@ -468,7 +521,7 @@ export function App() {
     } catch (error) {
       setFlashMessage(error instanceof Error ? error.message : "No se pudieron consultar modelos remotos", "error");
     } finally {
-      setLoadingLlmModels(false);
+      setLoadingRemoteLlmModels(false);
     }
   }
 
@@ -841,8 +894,13 @@ export function App() {
   }
 
   function renderLlmView() {
-    const remoteModelChoices = llmModelOptions.length > 0
-      ? llmModelOptions
+    const localModelChoices = localLlmModelOptions.length > 0
+      ? localLlmModelOptions
+      : llmConfig.localModel
+        ? [createModelOption(llmConfig.localModel)]
+        : [];
+    const remoteModelChoices = remoteLlmModelOptions.length > 0
+      ? remoteLlmModelOptions
       : llmConfig.apiModel
         ? [createModelOption(llmConfig.apiModel)]
         : [];
@@ -918,16 +976,39 @@ export function App() {
                     }
                   />
                 </Field>
+                <div className="flex">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full border-white/10 bg-white/6 text-white hover:bg-white/10 hover:text-white sm:w-auto"
+                    onClick={handleLoadLocalLlmModels}
+                    disabled={loadingLocalLlmModels || loading}
+                  >
+                    {loadingLocalLlmModels ? "Cargando modelos..." : "Ver modelos disponibles"}
+                  </Button>
+                </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Modelo" id="llm-local-model">
-                    <Input
+                    <select
                       id="llm-local-model"
-                      className="dashboard-dark-input"
+                      className="dashboard-dark-select"
                       value={llmConfig.localModel}
                       onChange={(event) =>
                         setLlmConfig((current) => ({ ...current, localModel: event.target.value }))
                       }
-                    />
+                      disabled={localModelChoices.length === 0}
+                    >
+                      <option value="">
+                        {localModelChoices.length > 0
+                          ? "Selecciona un modelo"
+                          : "Carga primero los modelos locales"}
+                      </option>
+                      {localModelChoices.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.label}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                   <Field label="Timeout ms" id="llm-local-timeout">
                     <Input
@@ -966,7 +1047,7 @@ export function App() {
                     value={llmConfig.apiProviderName}
                     onChange={(event) => {
                       const nextProvider = event.target.value as RemoteLlmProviderName;
-                      setLlmModelOptions([]);
+                      setRemoteLlmModelOptions([]);
                       setLlmConfig((current) => ({
                         ...current,
                         apiProviderName: nextProvider,
@@ -990,7 +1071,7 @@ export function App() {
                     placeholder={llmConfig.apiKeyConfigured ? "Ya existe una API key guardada" : "Pega aquí tu API key"}
                     value={llmConfig.apiKey ?? ""}
                     onChange={(event) => {
-                      setLlmModelOptions([]);
+                      setRemoteLlmModelOptions([]);
                       setLlmConfig((current) => ({ ...current, apiKey: event.target.value, apiModel: "" }));
                     }}
                   />
@@ -1007,10 +1088,10 @@ export function App() {
                     type="button"
                     variant="outline"
                     className="w-full border-white/10 bg-white/6 text-white hover:bg-white/10 hover:text-white sm:w-auto"
-                    onClick={handleLoadLlmModels}
-                    disabled={loadingLlmModels || loading}
+                    onClick={handleLoadRemoteLlmModels}
+                    disabled={loadingRemoteLlmModels || loading}
                   >
-                    {loadingLlmModels ? "Cargando modelos..." : "Ver modelos disponibles"}
+                    {loadingRemoteLlmModels ? "Cargando modelos..." : "Ver modelos disponibles"}
                   </Button>
                 </div>
                 <Field label="Modelo" id="llm-api-model">

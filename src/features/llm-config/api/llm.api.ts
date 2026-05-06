@@ -28,10 +28,16 @@ export function saveLlmConfig(config: LlmConfig, token: string) {
 }
 
 export function listLlmModels(
-  payload: {
-    providerName: Exclude<RemoteLlmProviderName, "">;
-    apiKey?: string;
-  },
+  payload:
+    | {
+        providerType: "LOCAL";
+        localBaseUrl?: string;
+      }
+    | {
+        providerType: "API";
+        providerName: Exclude<RemoteLlmProviderName, "">;
+        apiKey?: string;
+      },
   token: string
 ) {
   return apiRequest<LlmModelOption[]>("/llm/models", "POST", payload, token, { timeoutMs: 20000 });

@@ -88,6 +88,18 @@ function getIncidentSeverityClasses(value?: string | null) {
   }
 }
 
+function getIncidentPendingMessage(message: ApprovedMessage) {
+  if (message.incidentSummary) {
+    return null;
+  }
+
+  if (message.incidentSummaryError) {
+    return "No se pudo generar el reporte de incidente automaticamente. Vuelve a intentarlo en unos segundos o revisa la configuracion del modelo.";
+  }
+
+  return "Se esta generando el reporte de incidente para este correo relevante. Esto puede tardar unos segundos.";
+}
+
 function getIncidentStatusClasses(value?: string | null) {
   switch (getIncidentMetaValue(value)?.toLowerCase()) {
     case "resuelto":
@@ -99,6 +111,10 @@ function getIncidentStatusClasses(value?: string | null) {
     default:
       return "border-white/12 bg-white/6 text-white/70";
   }
+}
+
+function isCriticalIncident(message: ApprovedMessage) {
+  return getIncidentMetaValue(message.incidentSeverity)?.toLowerCase() === "critica";
 }
 
 function formatEmailBody(value: string) {
@@ -290,7 +306,14 @@ function renderContent(
             <div className="grid gap-4">
               {latestMessage ? (
                 <>
-                  <div className="min-w-0 rounded-[1.5rem] border border-white/8 bg-white/[0.045] p-5">
+                  <div
+                    className={[
+                      "min-w-0 rounded-[1.5rem] border p-5",
+                      isCriticalIncident(latestMessage)
+                        ? "border-red-400/30 bg-[linear-gradient(180deg,_rgba(120,18,18,0.20),_rgba(34,10,10,0.10))]"
+                        : "border-white/8 bg-white/[0.045]"
+                    ].join(" ")}
+                  >
                     <p className="text-[0.7rem] uppercase tracking-[0.18em] text-white/34">Remitente</p>
                     <p className="mt-3 break-words text-lg font-semibold leading-7 text-white">
                       {latestMessage.fromName || latestMessage.fromEmail}
@@ -348,7 +371,12 @@ function renderContent(
                       setSelectedModalView(incidentViewEnabled && message.status === "APPROVED" ? "incident" : "email");
                       setSelectedMessage(message);
                     }}
-                    className="block w-full rounded-[1.6rem] border border-white/8 bg-white/5 p-4 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[#59e1cf]/35 hover:bg-[#1a242d] hover:shadow-[0_18px_40px_rgba(0,0,0,0.28)] focus:outline-none focus:ring-2 focus:ring-[#59e1cf]/40"
+                    className={[
+                      "block w-full rounded-[1.6rem] border p-4 text-left transition duration-200 focus:outline-none focus:ring-2 focus:ring-[#59e1cf]/40",
+                      isCriticalIncident(message)
+                        ? "border-red-400/30 bg-[linear-gradient(180deg,_rgba(120,18,18,0.20),_rgba(34,10,10,0.10))] hover:-translate-y-0.5 hover:border-red-300/50 hover:bg-[linear-gradient(180deg,_rgba(138,20,20,0.24),_rgba(40,10,10,0.14))] hover:shadow-[0_18px_40px_rgba(80,0,0,0.28)]"
+                        : "border-white/8 bg-white/5 hover:-translate-y-0.5 hover:border-[#59e1cf]/35 hover:bg-[#1a242d] hover:shadow-[0_18px_40px_rgba(0,0,0,0.28)]"
+                    ].join(" ")}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
@@ -471,11 +499,13 @@ function renderContent(
                             </p>
                           ) : null}
                           <div className="whitespace-pre-wrap">
-                            {formatEmailBody(
-                              selectedMessage.incidentSummary ||
-                                "El incidente aun no fue generado para este correo relevante."
-                            )}
+                            {formatEmailBody(selectedMessage.incidentSummary || getIncidentPendingMessage(selectedMessage) || "")}
                           </div>
+                          {selectedMessage.incidentSummaryError ? (
+                            <p className="mt-3 text-sm text-red-300/90">
+                              Ultimo error: {selectedMessage.incidentSummaryError}
+                            </p>
+                          ) : null}
                         </>
                       )}
                     </div>
