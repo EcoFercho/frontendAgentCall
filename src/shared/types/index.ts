@@ -65,6 +65,9 @@ export type ApprovedMessage = {
   matchedRules?: string[];
   detectedClientName?: string | null;
   incidentSummary?: string | null;
+  incidentCategory?: string | null;
+  incidentStatus?: string | null;
+  incidentSeverity?: string | null;
   incidentSummaryModel?: string | null;
   incidentSummaryGeneratedAt?: string | null;
 };

@@ -85,6 +85,7 @@ export function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [messageSummaryCount, setMessageSummaryCount] = useState(0);
+  const [approvedMessageCount, setApprovedMessageCount] = useState(0);
   const [config, setConfig] = useState<GmailConfig>(defaultGmailConfig);
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(defaultLlmConfig);
   const [flash, setFlash] = useState("Inicia sesión para entrar al panel.");
@@ -104,7 +105,7 @@ export function App() {
   const dashboardRefreshInFlightRef = useRef(false);
   const suspendLlmConfigRefreshRef = useRef(false);
   const shiftImportInputRef = useRef<HTMLInputElement | null>(null);
-  const { messages, setMessages, isConnected } = useTicker([]);
+  const { messages, setMessages, isConnected, lastSummary } = useTicker([]);
 
   const todayDateValue = getTodayDateValue();
   const orderedShiftUsers = normalizeShiftUsers(shiftUsers);
@@ -158,6 +159,7 @@ export function App() {
     setShiftUsers([]);
     setLastSyncedAt(null);
     setMessageSummaryCount(0);
+    setApprovedMessageCount(0);
     setConfig(defaultGmailConfig);
     setLlmConfig(defaultLlmConfig);
     setLlmReferenceDraft(defaultLlmConfig.referenceMarkdown);
@@ -187,6 +189,7 @@ export function App() {
 
     setMessages(approvedMessages);
     setMessageSummaryCount(messageSummary.classifiedCount);
+    setApprovedMessageCount(messageSummary.approvedCount);
     if (savedShiftUsers) {
       setShiftUsers(savedShiftUsers);
     }
@@ -255,6 +258,7 @@ export function App() {
     setShiftUsers([]);
     setLastSyncedAt(null);
     setMessageSummaryCount(0);
+    setApprovedMessageCount(0);
     setConfig(defaultGmailConfig);
     setLlmConfig(defaultLlmConfig);
     setLlmReferenceDraft(defaultLlmConfig.referenceMarkdown);
@@ -718,6 +722,16 @@ export function App() {
   useEffect(() => {
     suspendLlmConfigRefreshRef.current = activeSection === "config" && configView === "llm";
   }, [activeSection, configView]);
+
+  useEffect(() => {
+    if (!lastSummary) {
+      return;
+    }
+
+    setMessageSummaryCount(lastSummary.classifiedCount);
+    setApprovedMessageCount(lastSummary.approvedCount);
+    setLastSyncedAt(lastSummary.lastSyncedAt);
+  }, [lastSummary]);
 
   function renderFlash() {
     const toneClass =
@@ -1570,6 +1584,8 @@ export function App() {
                 <div className="px-4 lg:px-6">
                   <TickerBoard
                     messages={messages}
+                    classifiedCount={messageSummaryCount}
+                    approvedCount={approvedMessageCount}
                     isLive={isConnected}
                     isSyncing={syncing || backgroundSyncing}
                     autoSyncEnabled={autoSyncEnabled}

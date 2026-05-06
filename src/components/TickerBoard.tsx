@@ -14,6 +14,8 @@ import {
 
 type TickerBoardProps = {
   messages: ApprovedMessage[];
+  classifiedCount: number;
+  approvedCount: number;
   isLive: boolean;
   isSyncing: boolean;
   autoSyncEnabled: boolean;
@@ -66,6 +68,39 @@ function getStatusClasses(status: ApprovedMessage["status"]) {
   }
 }
 
+function getIncidentMetaValue(value?: string | null) {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function getIncidentSeverityClasses(value?: string | null) {
+  switch (getIncidentMetaValue(value)?.toLowerCase()) {
+    case "critica":
+      return "border-red-400/25 bg-red-400/10 text-red-100";
+    case "alta":
+      return "border-orange-400/25 bg-orange-400/10 text-orange-100";
+    case "media":
+      return "border-amber-300/25 bg-amber-300/10 text-amber-100";
+    case "baja":
+      return "border-sky-400/25 bg-sky-400/10 text-sky-100";
+    default:
+      return "border-white/12 bg-white/6 text-white/70";
+  }
+}
+
+function getIncidentStatusClasses(value?: string | null) {
+  switch (getIncidentMetaValue(value)?.toLowerCase()) {
+    case "resuelto":
+      return "border-emerald-400/25 bg-emerald-400/10 text-emerald-100";
+    case "investigando":
+      return "border-amber-300/25 bg-amber-300/10 text-amber-100";
+    case "identificado":
+      return "border-cyan-400/25 bg-cyan-400/10 text-cyan-100";
+    default:
+      return "border-white/12 bg-white/6 text-white/70";
+  }
+}
+
 function formatEmailBody(value: string) {
   return value
     .replace(/\r\n/g, "\n")
@@ -82,8 +117,38 @@ function getEmailPreview(message: ApprovedMessage) {
   return content.length > 180 ? `${content.slice(0, 180).trim()}...` : content;
 }
 
+function renderIncidentMetaBadges(message: ApprovedMessage) {
+  const category = getIncidentMetaValue(message.incidentCategory);
+  const incidentStatus = getIncidentMetaValue(message.incidentStatus);
+  const severity = getIncidentMetaValue(message.incidentSeverity);
+
+  if (!category && !incidentStatus && !severity) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      {category ? (
+        <Badge variant="outline" className="border-white/12 bg-white/6 text-white/78">
+          {category}
+        </Badge>
+      ) : null}
+      {incidentStatus ? (
+        <Badge variant="outline" className={getIncidentStatusClasses(incidentStatus)}>
+          Estado: {incidentStatus}
+        </Badge>
+      ) : null}
+      {severity ? (
+        <Badge variant="outline" className={getIncidentSeverityClasses(severity)}>
+          Severidad: {severity}
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
 export function TickerBoard(props: TickerBoardProps) {
-  const { messages } = props;
+  const { messages, classifiedCount, approvedCount } = props;
   const [activeView, setActiveView] = useState<"all" | "approved">("approved");
   const [selectedMessage, setSelectedMessage] = useState<ApprovedMessage | null>(null);
   const [selectedModalView, setSelectedModalView] = useState<"email" | "incident">("email");
@@ -93,6 +158,7 @@ export function TickerBoard(props: TickerBoardProps) {
       : messages;
   const latestMessage = visibleMessages[0];
   const incidentViewEnabled = activeView === "approved";
+  const visibleCount = activeView === "approved" ? approvedCount : classifiedCount;
 
   const hasVisibleMessages = visibleMessages.length > 0;
 
@@ -155,6 +221,7 @@ export function TickerBoard(props: TickerBoardProps) {
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(280px,0.78fr)_minmax(0,1.45fr)] 2xl:grid-cols-[minmax(300px,0.72fr)_minmax(0,1.6fr)]">
         {renderContent(
           visibleMessages,
+          visibleCount,
           latestMessage,
           hasVisibleMessages,
           selectedMessage,
@@ -170,6 +237,7 @@ export function TickerBoard(props: TickerBoardProps) {
 
 function renderContent(
   visibleMessages: ApprovedMessage[],
+  visibleCount: number,
   latestMessage: ApprovedMessage | undefined,
   hasVisibleMessages: boolean,
   selectedMessage: ApprovedMessage | null,
@@ -235,6 +303,7 @@ function renderContent(
                         Cliente detectado: {latestMessage.detectedClientName}
                       </p>
                     ) : null}
+                    {renderIncidentMetaBadges(latestMessage)}
                   </div>
 
                   <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.045] p-5">
@@ -261,8 +330,8 @@ function renderContent(
             <div>
               <CardTitle className="text-white">Cola clasificada</CardTitle>
               <CardDescription className="text-white/44">
-                {hasVisibleMessages
-                  ? `${visibleMessages.length} correos visibles en esta vista`
+                {visibleCount > 0
+                  ? `${visibleCount} correos visibles en esta vista`
                   : "No hay correos visibles en esta vista"}
               </CardDescription>
             </div>
@@ -299,6 +368,7 @@ function renderContent(
                         </Badge>
                       </div>
                     </div>
+                    {renderIncidentMetaBadges(message)}
                     <p className="mt-3 text-sm leading-7 text-white/50">
                       {getEmailPreview(message)}
                     </p>
@@ -341,6 +411,7 @@ function renderContent(
                     {selectedMessage.detectedClientName ? (
                       <p className="text-sm text-[#8ef2e4]">Cliente: {selectedMessage.detectedClientName}</p>
                     ) : null}
+                    {renderIncidentMetaBadges(selectedMessage)}
                   </div>
 
                   <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.045] p-5">

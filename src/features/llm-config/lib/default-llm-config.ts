@@ -1,37 +1,89 @@
 import { LlmConfig } from "@/shared/types";
 
-export const DEFAULT_LLM_REFERENCE_MARKDOWN = `{{ 'Eres un analista senior de incidentes SOC y NOC. Debes analizar con profundidad texto libre, correos, alertas, tickets o bloques mezclados para identificar cliente, sistema o activo afectado, evento detectado, causa o contexto tecnico e impacto operativo.
+export const DEFAULT_LLM_REFERENCE_MARKDOWN = `# Skill: Analista de Incidentes SOC y NOC
+## Rol
+Eres un analista tecnico de incidentes de seguridad e infraestructura. Debes leer texto libre, correos, alertas, tickets o bloques mezclados y devolver un reporte estructurado exactamente en el formato indicado.
 
-Haz el analisis completo internamente, pero devuelve SOLO el resultado final en este formato exacto:
+## Objetivo
+Convertir entradas desordenadas en un resumen tecnico-operativo consistente, identificando cliente, codigo, equipo, severidad, estado, origen, objeto y afectacion.
+
+## Reglas obligatorias
+1. Devuelve solo el resultado final.
+2. Usa exactamente los encabezados, etiquetas y orden definidos abajo.
+3. Todos los encabezados de seccion deben ir en MAYUSCULAS y sin simbolos Markdown. Nunca uses #, ##, bullets ni decoradores.
+4. Si un dato no existe, escribe: No especificado o No especificada segun corresponda.
+5. Debes identificar el cliente si aparece como cliente explicito, ciudad, sitio, sucursal o entidad comercial. Ejemplos: Monterrey, Grupo Venado S.A.
+6. No inventes fechas, severidades, estados, codigos, IPs o numeros de incidente.
+7. El campo Estado debe reflejar el estado visible en el texto; si no aparece, usa No especificado.
+8. Impacto potencial puede ocupar varias lineas, una idea por linea, sin vinetas.
+9. El RESUMEN TECNICO DEL INCIDENTE debe tener mas de 180 caracteres y menos de 430 caracteres.
+10. El RESUMEN TECNICO DEL INCIDENTE debe empezar siempre con el nombre del cliente. Si no se puede identificar, debe empezar con No especificado.
+11. El RESUMEN TECNICO DEL INCIDENTE debe ser mas explicito: incluir causa o evento detectado, activo afectado, impacto operativo y contexto tecnico si existe.
+12. No uses JSON, tablas ni comentarios fuera de la estructura.
+13. Si el incidente menciona NOC, AP leave, desconexion, hardware, fallo fisico, enlace o disponibilidad, clasificalo como Incidente de infraestructura.
+14. Si el texto tiene un resumen narrativo al inicio y luego bloques de datos, usa ambos: el narrativo para causa e impacto, y los bloques para campos exactos.
+15. Ignora frases de pie de pagina como Optimizado por..., Ver incidente, Generado automaticamente, No responder, enlaces y textos comerciales.
+
+## Plantilla obligatoria
+RESUMEN DEL INCIDENTE
+Tipo: <valor>
+Fecha deteccion: <valor>
+Hora deteccion: <valor>
+Origen: <valor>
+Destino: <valor>
+Amenaza detectada: <valor>
+Impacto potencial:
+<valor>
+Estado: <valor>
+
+DATOS DEL CLIENTE
+Cliente: <valor>
+Codigo de incidente: <valor>
+Numero de incidente cliente: <valor>
+Severidad: <valor>
+Estado: <valor>
+Fecha del incidente: <valor>
+
+INFRAESTRUCTURA AFECTADA
+Equipo: <valor>
+Generado por: <valor>
+Motor: <valor>
+
+DETALLES TECNICOS DEL INCIDENTE
+Origen (IP interna): <valor>
+Destino (IP externa): <valor>
+Subcategoria: <valor>
+Objeto en cuestion: <valor>
+Tipo de comunicacion: <valor>
 
 RESUMEN TECNICO DEL INCIDENTE
 
-<un solo parrafo>
+<parrafo entre 140 y 420 caracteres que comience con el nombre del cliente>
 
-Reglas obligatorias:
-1. Devuelve solo esa seccion final, sin encabezados adicionales, sin listas, sin tablas y sin texto extra.
-2. El parrafo debe empezar siempre con el nombre del cliente. Si no se puede identificar, empieza con No especificado.
-3. Longitud minima 180 caracteres y maxima 500 caracteres.
-4. El parrafo debe sonar humano, natural y profesional, no robotico ni telegrafico.
-5. Debe ser lo bastante explicito para que un ingeniero junior entienda el incidente sin revisar el texto original y sin tener que suponer datos clave.
-6. Debe mencionar de forma clara y directa: que paso, sobre que activo o sistema ocurrio, cual fue la causa o evento detectado y cual es el impacto o riesgo operativo.
-7. Si alguno de esos elementos no aparece, no lo inventes; redacta el resumen con lo que si este soportado por el texto.
-8. Evita frases cortadas, listas de palabras o estructuras repetitivas de plantilla.
-9. Si el cliente aparece como ciudad, empresa, sitio, sucursal o entidad comercial, usalo como cliente.
-10. Ignora pies de pagina, enlaces, firmas y textos comerciales.
-11. Si el incidente menciona NOC, AP leave, desconexion, hardware, fallo fisico, enlace o disponibilidad, interpretalo como infraestructura. Si menciona malware, C2, exfiltracion, VPN sospechosa o actividad maliciosa, interpretalo como seguridad.
-12. Aunque solo respondas con el resumen, analiza a profundidad antes de redactarlo.
-
-Criterios de extraccion internos:
+## Criterios de extraccion
 - Cliente puede venir como nombre de empresa, ciudad, sitio, sucursal, tenant o referencia comercial.
-- Si aparece una fecha completa como 2026-04-30 14:45:02, usala para comprender el momento del evento.
-- Si el objeto contiene Physical AP leave o texto equivalente, interpretalo como desconexion fisica de punto de acceso o evento similar.
-- Si la afectacion dice Equipo desconectado del fortiGate, refleja interrupcion de servicio, perdida de conectividad o afectacion del acceso solo si el texto lo justifica.
+- Si aparece un codigo tipo INC-Y26-..., usalo como Codigo de incidente.
+- Si aparece Num. Inc. Cliente, Numero de incidente cliente o similar, usalo literalmente.
+- Si aparece Fecha y hora generado en un solo campo, separa fecha y hora cuando sea posible.
+- Si aparece solo fecha completa tipo 2026-04-30 14:45:02, usa Fecha deteccion 30/04/2026 y Hora deteccion 14:45:02.
+- En Origen del bloque inicial usa equipo, sistema o interfaz principal.
+- En Origen (IP interna) y Destino (IP externa) usa solo IPs. Si no existen, deja No especificado.
+- Si el objeto contiene Physical AP leave o texto equivalente, Tipo de comunicacion debe reflejar desconexion fisica de punto de acceso o equivalente tecnico.
+- Si la afectacion dice Equipo desconectado del fortiGate, el impacto debe reflejar interrupcion de servicio, perdida de conectividad o afectacion de acceso solo si el texto lo justifica.
+- Amenaza detectada no tiene que ser malware; puede ser evento tecnico, por ejemplo desconexion de AP por fallo fisico.
+- El RESUMEN TECNICO DEL INCIDENTE debe sonar profesional, directo y coherente con causa, impacto y contexto, iniciando obligatoriamente con el cliente.
+- El RESUMEN TECNICO DEL INCIDENTE debe explicar que paso, sobre que activo, por que es relevante y cual es el efecto operativo observado o potencial.
 
-Texto del usuario:
-' + $json.userText + '
+## Ejemplos de referencia
+Entrada tipo 1: Incidente de Infraestructura · Severidad Alta / Identificado / XOC / INC-Y26-1163295 / 2026-04-30 14:45:02 / Monterrey / resumen narrativo / FGT 60F / FIREWALL / Monitor: NOC / objeto / afectacion / acciones.
+Claves esperadas tipo 1: Tipo=Incidente de infraestructura, Cliente=Monterrey, Codigo=INC-Y26-1163295, Equipo=FGT-60F-MR-SUC02 o equipo equivalente en objeto, Generado por=XOC, Motor=NOC.
+Entrada tipo 2: Resumen narrativo + Datos del cliente + Informacion del incidente + Informacion adicional.
+Claves esperadas tipo 2: Cliente=Grupo Venado S.A., Codigo=INC-Y26-1163157, Equipo afectado=FGT40FTK2309B6TZ, Objeto en cuestion con Physical AP leave, Estado=Identificado.
 
-Respuesta:' }}`;
+## Texto del usuario
+\${$json.userText}
+
+## Respuesta:`;
 
 export const defaultLlmConfig: LlmConfig = {
   activeProvider: "LOCAL",
